@@ -1,92 +1,90 @@
- 'use client';
+'use client'
+import { useState } from "react";
 
-import { useState } from 'react';
-// import { useEffect } from 'react'; // Not strictly needed for this component
+export default function UploadPage() {
+  const [file, setFile] = useState<File | null>(null);
+  const [context, setContext] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [thumbnail, setThumbnail] = useState<string | null>(null);
+  const [videoPath, setVideoPath] = useState<string | null>(null);
+  const [hashtags, setHashtags] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [message, setMessage] = useState("");
 
-export default function UploadVideo() {
-  const [thumbnailUrl, setThumbnailUrl] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null); // State to store error messages
-
-  const handleUpload = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setLoading(true);
-    setThumbnailUrl('');
-    setError(null); // Clear previous errors
-
-    const formData = new FormData(e.currentTarget);
-    const videoFile = formData.get("video");
-
-    if (!videoFile) {
-      setError("Please select a video file.");
-      setLoading(false);
+  const handleGenerateMetadata = async () => {
+    if (!file && !context) {
+      setMessage("Please upload a video or provide context");
       return;
     }
-
+    setUploading(true);
     try {
-      const res = await fetch('/api/thumbnail', {
-        method: 'POST',
+      const formData = new FormData();
+      if (file) formData.append("video", file);
+      formData.append("context", context || file?.name || "Default video context");
+
+      const res = await fetch("/api/generateMetadata", {
+        method: "POST",
         body: formData,
       });
 
-      console.log('Response status:', res.status);
-      const data: { thumbnailUrl?: string; error?: string } = await res.json();
-
-      if (res.ok && data.thumbnailUrl) {
-        setThumbnailUrl(data.thumbnailUrl);
+      const data = await res.json();
+      if (res.ok) {
+        setTitle(data.title);
+        setDescription(data.description);
+        setHashtags(data.hashtags);
+        setThumbnail(data.thumbnail);
+        setVideoPath(data.videoPath);
+        setMessage("Video uploaded and metadata generated successfully!");
       } else {
-        const errorMessage = data.error || 'Failed to generate thumbnail.';
-        console.error(errorMessage);
-        setError(errorMessage); // Set the error message
+        setMessage(data.error || "Failed to generate metadata");
       }
-    } catch (uploadError) {
-      console.error('Upload error:', uploadError);
-      setError(`An unexpected error occurred during upload: ${(uploadError as Error).message}`);
+    } catch (error: any) {
+      setMessage(`Error: ${error.message}`);
     } finally {
-      setLoading(false);
+      setUploading(false);
     }
   };
 
   return (
-    <div className="max-w-xl mx-auto mt-12 p-6 bg-white shadow-lg rounded-2xl border border-gray-200">
-      <h1 className="text-2xl font-bold mb-6 text-center text-gray-800">
-        Upload Video & Generate Thumbnail
-      </h1>
-
-      <form onSubmit={handleUpload} className="flex flex-col items-center gap-4">
+    <main className="flex min-h-screen flex-col items-center justify-center p-24">
+      <h1 className="text-3xl font-bold mb-8">Upload Your Video</h1>
+      <div className="w-full max-w-md">
         <input
           type="file"
-          name="video"
           accept="video/*"
-          required
-          className="block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          className="mb-4 p-2 border rounded w-full"
         />
-
+        <input
+          type="text"
+          value={context}
+          onChange={(e) => setContext(e.target.value)}
+          placeholder="Enter video context (optional)"
+          className="mb-4 p-2 border rounded w-full"
+        />
         <button
-          type="submit"
-          disabled={loading}
-          className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:bg-gray-400"
+          onClick={handleGenerateMetadata}
+          disabled={uploading}
+          className={`px-4 py-2 bg-blue-500 text-white rounded w-full ${
+            uploading ? "opacity-50 cursor-not-allowed" : ""
+          }`}
         >
-          {loading ? 'Generating...' : 'Upload & Generate'}
+          {uploading ? "Processing..." : "Upload & Generate Metadata"}
         </button>
-      </form>
-
-      {error && ( // Display error messages
-        <div className="mt-4 text-center text-red-600">
-          <p>{error}</p>
-        </div>
-      )}
-
-      {thumbnailUrl && (
-        <div className="mt-8 text-center">
-          <h3 className="text-lg font-semibold text-gray-700 mb-2">Generated Thumbnail:</h3>
-          <img
-            src={thumbnailUrl}
-            alt="Generated thumbnail"
-            className="rounded-lg border shadow w-full max-w-xs mx-auto"
-          />
-        </div>
-      )}
-    </div>
+        {message && <p className={`mt-4 ${message.includes("Error") ? "text-red-500" : "text-green-500"}`}>{message}</p>}
+        {title && <p className="mt-4 text-gray-600"><strong>Title:</strong> {title}</p>}
+        {description && <p className="mt-2 text-gray-600"><strong>Description:</strong> {description}</p>}
+        {thumbnail && (
+          <p className="mt-2 text-gray-600">
+            <strong>Thumbnail:</strong> <img src={thumbnail} alt="Thumbnail" className="mt-2 max-w-xs" />
+          </p>
+        )}
+        {videoPath && <p className="mt-2 text-gray-600"><strong>Video Path:</strong> {videoPath}</p>}
+        {hashtags.length > 0 && (
+          <p className="mt-2 text-gray-600"><strong>Hashtags:</strong> {hashtags.join(", ")}</p>
+        )}
+      </div>
+    </main>
   );
 }
