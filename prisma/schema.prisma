@@ -33,6 +33,7 @@ model Video {
   description String?
   thumbnail String?
   hashtags String[]
+  category String?
   status String? @default("uploaded")
   youtubeVideoId String?
   createdAt DateTime @default(now())
