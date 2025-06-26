@@ -25,7 +25,9 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       authorization: {
         params: {
-          scope: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/userinfo.email openid",
+          scope: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/userinfo.email  https://www.googleapis.com/auth/youtube.readonly openid",
+          access_type: "offline",
+        prompt: "consent",
         },
       },
     }),

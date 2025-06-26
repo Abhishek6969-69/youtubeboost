@@ -20,7 +20,9 @@ const oauth2Client=new google.auth.OAuth2(
 
 export async function POST(req: NextRequest) {
   console.log("🛠️ Upload route hit");
-  
+  console.log("Google Client ID:", process.env.GOOGLE_CLIENT_ID);
+console.log("Google Client Secret:", process.env.GOOGLE_CLIENT_SECRET);
+console.log("Google Redirect URI:", process.env.GOOGLE_REDIRECT_URI);
  
 // console.log(formData.get("thumbnail"))
 
@@ -58,7 +60,7 @@ try{
     // Write file to /tmp folder
     const tempPath = `/tmp/${uuidv4()}-${videoFile.name}`;
     await writeFile(tempPath, buffer);
-    console.log(formData)
+    // console.log(formData)
     oauth2Client.setCredentials({
       access_token: user.googleAccessToken,
       refresh_token: user.googleRefreshToken,
@@ -75,7 +77,7 @@ try{
       }
     });
    const youtube=google.youtube({version:'v3',auth:oauth2Client});
-   console.log(youtube);
+  //  console.log(youtube);
   const res = await youtube.videos.insert({
       part: ['snippet', 'status'],
       requestBody: {

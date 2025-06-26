@@ -90,7 +90,7 @@ export default function UploadForm() {
     formData.append("hashtags", JSON.stringify(hashtags));
 
     try {
-      const response = await axios.post("/api/test1/upload", formData, {
+      const response = await axios.post("/api/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
