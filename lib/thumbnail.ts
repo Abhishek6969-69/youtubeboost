@@ -14,7 +14,7 @@ export async function generateThumbnail(videoPath: string): Promise<string> {
 
   const tempThumbnailPath = await thumbsupply.generateThumbnail(videoPath, {
     size: thumbsupply.ThumbSize.LARGE,
-    timestamp: '00:00:01',
+    timestamp: '00:00:05',
     cacheDir: thumbnailDir,
   });
 

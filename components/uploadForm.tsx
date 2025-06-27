@@ -110,7 +110,7 @@ export default function UploadForm() {
 
   return (
     <div className="max-w-md mx-auto p-4">
-      {JSON.stringify(session)}
+      {/* {JSON.stringify(session)} */}
       <h1 className="text-2xl font-bold mb-4">Upload Video to YouTube</h1>
       {!session ? (
         <button

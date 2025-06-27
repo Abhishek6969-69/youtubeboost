@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     const description = (formData.get("description") as string) || "Untitled description";
     const hashtags = (formData.get("hashtags") as string)?.split(",") || [];
     const thumbnail = formData.get("thumbnail") as File;
-
+ console.log(thumbnail)
     if (!videoFile || typeof videoFile.name !== "string") {
       return NextResponse.json({ error: "Invalid or missing video file" }, { status: 400 });
     }
@@ -104,8 +104,29 @@ export async function POST(req: NextRequest) {
         body: fs.createReadStream(tempPath),
       },
     });
-
+console.log(uploadRes)
     await unlink(tempPath);
+if (
+  thumbnail &&
+  typeof thumbnail.name === "string" &&
+  typeof uploadRes.data.id === "string"
+) {
+  const thumbArrayBuffer = await thumbnail.arrayBuffer();
+  const thumbBuffer = Buffer.from(thumbArrayBuffer);
+  const thumbTempPath = `/tmp/${uuidv4()}-${thumbnail.name}`;
+
+  await writeFile(thumbTempPath, thumbBuffer);
+
+  await youtube.thumbnails.set({
+    videoId: uploadRes.data.id,
+    media: {
+      mimeType: "image/jpeg",
+      body: fs.createReadStream(thumbTempPath),
+    },
+  });
+
+  await unlink(thumbTempPath); 
+}
 
     return NextResponse.json({ videoId: uploadRes.data.id, message: "Video uploaded successfully" });
   } catch (error: any) {
