@@ -30,6 +30,7 @@
     "next-auth": "^4.24.11",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sonner": "^2.0.5",
     "tailwind-merge": "^3.3.1",
     "thumbsupply": "0.4.0"
   },
