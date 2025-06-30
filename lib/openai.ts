@@ -8,14 +8,15 @@ Context: {context}
 - Generate a catchy, SEO-friendly title (max 100 characters).
 - Generate a description (max 500 characters) with keywords and a call-to-action.
 - Generate 3-5 relevant hashtags.
+- - "category": One word or phrase indicating the video category (e.g. "Travel", "Technology", "Education")
 Output format:
 {
   "title": "<title>",
   "description": "<description>",
-  "hashtags": ["#tag1", "#tag2", "#tag3"]
+  "hashtags": ["#tag1", "#tag2", "#tag3"],
+  "category":"<category>"
 }
 `;
-
 const metadataSchema = z.object({
   title: z.string().max(100),
   description: z.string().max(500),
