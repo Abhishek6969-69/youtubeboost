@@ -1,42 +1,62 @@
+'use server';
+
 import { z } from "zod";
 import Groq from "groq-sdk";
+import { initPineconeIndex } from "@/lib/pinecone";
+import { generateEmbedding } from "@/lib/embedding";
 import { setTimeout } from "timers/promises";
 
 const TEMPLATE = `
-INSTRUCTIONS: Based on the provided context, generate a YouTube video title, description, and hashtags.
+INSTRUCTIONS: Based on the provided context and retrieved metadata, generate a YouTube video title, description, hashtags, and category.
 Context: {context}
+Retrieved Metadata: {retrievedMetadata}
 - Generate a catchy, SEO-friendly title (max 100 characters).
 - Generate a description (max 500 characters) with keywords and a call-to-action.
 - Generate 3-5 relevant hashtags.
-- - "category": One word or phrase indicating the video category (e.g. "Travel", "Technology", "Education")
+- "category": One word or phrase indicating the video category (e.g., "Travel", "Technology", "Education").
 Output format:
 {
   "title": "<title>",
   "description": "<description>",
   "hashtags": ["#tag1", "#tag2", "#tag3"],
-  "category":"<category>"
+  "category": "<category>"
 }
 `;
+
 const metadataSchema = z.object({
   title: z.string().max(100),
   description: z.string().max(500),
   hashtags: z.array(z.string()).min(3).max(5),
+  category: z.string().max(50).optional(),
 });
 
 export async function generateMetadata(context: string) {
   try {
-    // Initialize Groq API
     const groq = new Groq({
       apiKey: process.env.GROQ_API_KEY!,
     });
-
-    // Use a valid model (fallback to a known model if not specified)
     const model = process.env.GROQ_MODEL || "llama3-8b-8192";
 
-    // Format prompt with context
-    const prompt = TEMPLATE.replace("{context}", context);
+    // Generate embedding directly
+    const embedding = await generateEmbedding(context);
 
-    // Generate content with retry logic
+    // Retrieve similar metadata from Pinecone
+    const index = await initPineconeIndex();
+    const queryResponse = await index.query({
+      vector: embedding,
+      topK: 3,
+      includeMetadata: true,
+    });
+
+    const retrievedMetadata = queryResponse.matches
+      .map((match) => {
+        const meta = match.metadata as any;
+        return `Title: ${meta.title}, Description: ${meta.description}, Hashtags: ${meta.hashtags.join(", ")}, Category: ${meta.category}`;
+      })
+      .join("\n");
+
+    const prompt = TEMPLATE.replace("{context}", context).replace("{retrievedMetadata}", retrievedMetadata || "No similar metadata found.");
+
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const result = await groq.chat.completions.create({
@@ -56,21 +76,15 @@ export async function generateMetadata(context: string) {
           throw new Error("Groq response content is null or undefined");
         }
 
-        // Log raw response for debugging
         console.log("Groq raw response:", responseText);
 
-        // Extract JSON from response (handle extra text)
-        let jsonString = responseText;
-        // Remove markdown code fences
-        jsonString = jsonString.replace(/```json\n|\n```/g, "").trim();
-        // Extract JSON object between { and }
+        let jsonString = responseText.replace(/```json\n|\n```/g, "").trim();
         const jsonMatch = jsonString.match(/{[\s\S]*}/);
         if (!jsonMatch) {
           throw new Error("No valid JSON object found in response");
         }
         jsonString = jsonMatch[0];
 
-        // Parse JSON response
         let metadata;
         try {
           metadata = JSON.parse(jsonString);
@@ -79,14 +93,13 @@ export async function generateMetadata(context: string) {
           throw new Error(`Failed to parse JSON: ${jsonString}`);
         }
 
-        // Validate output structure
         return metadataSchema.parse(metadata);
       } catch (error: any) {
         console.warn(`Retry attempt ${attempt} failed: ${error.message}`);
         if (attempt === 3 || (error.status && error.status !== 429)) {
           throw error;
         }
-        await setTimeout(1000 * attempt); // Exponential backoff
+        await setTimeout(1000 * attempt);
       }
     }
 

@@ -6,7 +6,7 @@ import { useSession, signIn } from 'next-auth/react';
 import { Sparkles, Target, TrendingUp, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { GeneratedFeatureCards } from './ui/generatedfeature';
 
 export default function UploadForm() {
@@ -15,11 +15,13 @@ export default function UploadForm() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
+  const [context, setContext] = useState('');
   const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState('');
+  const [videoId, setVideoId] = useState<string | null>(null); // ✅ New state
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) setFile(e.target.files[0]);
@@ -32,7 +34,7 @@ export default function UploadForm() {
     setUploading(true);
     const formData = new FormData();
     formData.append('video', file);
-    formData.append('context', file.name);
+    formData.append('context', context || file.name);
 
     try {
       const response = await axios.post('/api/generateMetadata', formData);
@@ -41,20 +43,39 @@ export default function UploadForm() {
         description: string;
         category: string;
         hashtags: string[];
-        thumbnail: string;
+        thumbnail?: string;
+        FingMetadata?: string;
       };
+
+      const thumbnailFilename = data.thumbnail ?? data.FingMetadata;
+      if (!thumbnailFilename) {
+        console.warn('Thumbnail filename is undefined in API response');
+        setMessage('Metadata generated, but thumbnail is missing. Please try again.');
+        return;
+      }
+
       setTitle(data.title);
       setDescription(data.description);
       setCategory(data.category);
       setHashtags(data.hashtags);
 
-      const thumbPath = `/uploads/thumbnails/${encodeURIComponent(data.thumbnail)}`;
-      setThumbnailUrl(thumbPath);
-      const blob = await fetch(thumbPath).then(r => r.blob());
-      setThumbnailFile(new File([blob], data.thumbnail, { type: blob.type }));
-      setMessage('Metadata generated successfully!');
+      const thumbPath = `/Uploads/thumbnails/${encodeURIComponent(thumbnailFilename)}`;
+      try {
+        const fetchResponse = await fetch(thumbPath);
+        if (!fetchResponse.ok) {
+          throw new Error(`Failed to fetch thumbnail at ${thumbPath}: ${fetchResponse.statusText}`);
+        }
+        const blob = await fetchResponse.blob();
+        setThumbnailUrl(thumbPath);
+        setThumbnailFile(new File([blob], thumbnailFilename, { type: blob.type }));
+        setMessage('Metadata generated successfully!');
+      } catch (fetchError: any) {
+        console.error('Thumbnail fetch error:', fetchError);
+        setMessage(`Error fetching thumbnail: ${fetchError.message}`);
+      }
     } catch (err: any) {
-      setMessage(err.response?.data?.error || 'Error generating metadata.');
+      console.error('Metadata generation error:', err);
+      setMessage(err.response?.data?.error || err.message || 'Error generating metadata.');
     } finally {
       setUploading(false);
     }
@@ -76,9 +97,17 @@ export default function UploadForm() {
     try {
       const response = await axios.post('/api/upload', formData);
       const data = response.data as { authUrl?: string; videoId?: string };
-      if (data.authUrl) window.location.href = data.authUrl;
-      else setMessage(`Video uploaded! Video ID: ${data.videoId}`);
+
+      if (data.authUrl) {
+        window.location.href = data.authUrl;
+      } else if (data.videoId) {
+        setVideoId(data.videoId); // ✅ store for rendering link
+        setMessage('Video uploaded successfully! You can now view it on YouTube.');
+      } else {
+        setMessage('Video uploaded, but no video ID returned.');
+      }
     } catch (err: any) {
+      console.error('Upload error:', err);
       setMessage(err.response?.data?.error || 'Failed to upload video.');
     } finally {
       setUploading(false);
@@ -88,7 +117,9 @@ export default function UploadForm() {
   return (
     <div className="flex flex-col items-center justify-center space-y-8">
       {!session ? (
-        <Button onClick={() => signIn('google')} className="w-full max-w-md">Sign in with Google</Button>
+        <Button onClick={() => signIn('google')} className="w-full max-w-md">
+          Sign in with Google
+        </Button>
       ) : (
         <>
           <Card className="w-full max-w-2xl">
@@ -98,6 +129,14 @@ export default function UploadForm() {
             </CardHeader>
             <CardContent className="space-y-4">
               <Input type="file" accept="video/*" onChange={handleFileChange} disabled={uploading} />
+              <textarea
+                className="w-full rounded border p-2"
+                placeholder="Enter additional context for metadata generation (optional)"
+                value={context}
+                onChange={(e) => setContext(e.target.value)}
+                disabled={uploading}
+                rows={4}
+              />
               <Button onClick={handleGenerateMetadata} disabled={uploading} className="w-full">
                 {uploading ? 'Generating...' : 'Generate Metadata'}
               </Button>
@@ -126,9 +165,24 @@ export default function UploadForm() {
       )}
 
       {message && (
-        <p className={`text-sm ${message.includes('Error') || message.includes('Failed') ? 'text-red-500' : 'text-green-500'}`}>
+        <p
+          className={`text-sm ${
+            message.includes('Error') || message.includes('Failed') ? 'text-red-500' : 'text-green-500'
+          }`}
+        >
           {message}
         </p>
+      )}
+
+      {videoId && (
+        <a
+          href={`https://www.youtube.com/watch?v=${videoId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:underline text-sm"
+        >
+          👉 View Uploaded Video on YouTube
+        </a>
       )}
     </div>
   );

@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { generateThumbnail } from "@/lib/thumbnail";
 import { generateMetadata } from "@/lib/openai";
+import { initPineconeIndex } from "@/lib/pinecone";
+import { generateEmbedding } from "@/lib/embedding";
 import prisma from "@/lib/prisma";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
@@ -24,7 +26,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const videoFile = formData.get("video") as File | null;
     const context = formData.get("context") as string | null;
-console.log(session)
+
     if (!videoFile) {
       return NextResponse.json({ error: "No video file uploaded" }, { status: 400 });
     }
@@ -43,23 +45,29 @@ console.log(session)
 
     try {
       thumbnailPath = await generateThumbnail(videoPath);
+      console.log('Generated thumbnailPath:', thumbnailPath);
     } catch (thumbError) {
       console.error("Thumbnail generation error:", thumbError);
       throw new Error("Failed to generate thumbnail");
     }
 
     const metadataContext = context || videoFile.name;
-    type Metadata = {
-      title: string;
-      description: string;
-      hashtags: string[];
-      category?: string;
-    };
-    const metadata = await generateMetadata(metadataContext) as Metadata;
-    // Ensure metadata has a category property
-    if (!('category' in metadata)) {
-      metadata.category = "Uncategorized"; // or set a default/fallback value
-    }
+    const metadata = await generateMetadata(metadataContext);
+
+    const index = await initPineconeIndex();
+    const embedding = await generateEmbedding(`${metadata.title} ${metadata.description} ${metadata.hashtags.join(" ")}`);
+    await index.upsert([
+      {
+        id: videoFile.name,
+        values: embedding,
+        metadata: {
+          title: metadata.title,
+          description: metadata.description,
+          hashtags: metadata.hashtags,
+          category: metadata.category || "Uncategorized",
+        },
+      },
+    ]);
 
     let videoRecord;
     try {
@@ -70,14 +78,18 @@ console.log(session)
           title: metadata.title,
           description: metadata.description,
           thumbnail: thumbnailPath,
-          category:metadata.category, // Removed because 'category' is not a valid field in the Video model
+          category: metadata.category || "Uncategorized",
           hashtags: metadata.hashtags,
-          status: "PENDING", // Standardized to uppercase
+          status: "PENDING",
         },
       });
     } catch (dbError) {
       console.error("Database error:", dbError);
       return NextResponse.json({ error: "Failed to save video metadata to database" }, { status: 500 });
+    }
+
+    if (!thumbnailPath) {
+      throw new Error('Thumbnail path is undefined');
     }
 
     return NextResponse.json({
@@ -86,7 +98,7 @@ console.log(session)
       thumbnail: path.basename(thumbnailPath),
       videoPath: path.basename(videoPath),
       hashtags: metadata.hashtags,
-      category:metadata.category,
+      category: metadata.category,
     });
   } catch (error: any) {
     console.error("Error processing video:", error);

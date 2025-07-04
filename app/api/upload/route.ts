@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
           categoryId,
         },
         status: {
-          privacyStatus: "private",
+          privacyStatus: "public",
         },
       },
       media: {
