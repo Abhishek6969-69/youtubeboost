@@ -1,4 +1,3 @@
-// lib/auth.ts
 import NextAuth, { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import prisma from "@/lib/prisma";
@@ -25,45 +24,73 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       authorization: {
         params: {
-          scope: ["https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/userinfo.email  https://www.googleapis.com/auth/youtube.readonly  https://www.googleapis.com/auth/youtube openid"].join(" "),
+          scope: [
+            "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube.readonly",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/userinfo.profile",
+            "openid",
+          ].join(" "),
           access_type: "offline",
-        prompt: "consent",
+          prompt: "consent",
         },
       },
     }),
   ],
   callbacks: {
     async jwt({ token, account }) {
+      console.log('JWT Callback - Account:', JSON.stringify(account, null, 2));
       if (account) {
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
         token.expiryDate = account.expires_at ? account.expires_at * 1000 : null;
 
         // Store tokens in User model
-        await prisma.user.upsert({
-          where: { email: token.email! },
-          update: {
-            googleAccessToken: account.access_token,
-            googleRefreshToken: account.refresh_token,
-            updatedAt: new Date(),
-          },
-          create: {
-            id: token.sub!,
-            email: token.email!,
-            googleAccessToken: account.access_token,
-            googleRefreshToken: account.refresh_token,
-            createdAt: new Date(),
-          },
-        });
+        try {
+          await prisma.user.upsert({
+            where: { email: token.email! },
+            update: {
+              googleAccessToken: account.access_token,
+              googleRefreshToken: account.refresh_token,
+              updatedAt: new Date(),
+            },
+            create: {
+              id: token.sub!,
+              email: token.email!,
+              googleAccessToken: account.access_token,
+              googleRefreshToken: account.refresh_token,
+              createdAt: new Date(),
+            },
+          });
+        } catch (error) {
+          console.error('Prisma upsert error:', error);
+        }
       }
       return token;
     },
     async session({ session, token }) {
+      console.log('Session Callback - Token:', JSON.stringify(token, null, 2));
       if (session.user) {
         session.user.id = typeof token.sub === "string" ? token.sub : undefined;
         session.user.accessToken = typeof token.accessToken === "string" ? token.accessToken : undefined;
         session.user.refreshToken = typeof token.refreshToken === "string" ? token.refreshToken : undefined;
         session.user.expiryDate = typeof token.expiryDate === "number" ? token.expiryDate : null;
+
+        // Fetch tokens from database if missing in session
+        if (!session.user.accessToken || !session.user.refreshToken) {
+          try {
+            const user = await prisma.user.findUnique({
+              where: { email: token.email! },
+              select: { googleAccessToken: true, googleRefreshToken: true },
+            });
+            if (user) {
+              session.user.accessToken = user.googleAccessToken || undefined;
+              session.user.refreshToken = user.googleRefreshToken || undefined;
+            }
+          } catch (error) {
+            console.error('Prisma fetch error:', error);
+          }
+        }
       }
       return session;
     },

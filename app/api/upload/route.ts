@@ -1,138 +1,158 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import prisma from "@/lib/prisma";
-import { writeFile, unlink } from "fs/promises";
-import fs from "fs";
-import { v4 as uuidv4 } from "uuid";
-import { google } from "googleapis";
+import { NextRequest, NextResponse } from 'next/server';
+import { google } from 'googleapis';
+import { getServerSession } from 'next-auth';
+import { Readable } from 'stream';
+import prisma from '@/lib/prisma';
+import { authOptions } from '@/lib/auth';
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
-);
+declare module 'next-auth' {
+  interface Session {
+    user: {
+      id?: string;
+      accessToken?: string;
+      refreshToken?: string;
+      expiryDate?: number | null;
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+    };
+  }
+}
 
-export async function POST(req: NextRequest) {
-  console.log("🛠️ Upload route hit");
-
+export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
+
     if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    });
+    const accessToken = session.user.accessToken;
+    const refreshToken = session.user.refreshToken;
 
-    if (!user?.googleAccessToken  && !user?.googleRefreshToken) {
-      return NextResponse.json({ error: "Missing Google tokens" }, { status: 403 });
+    if (!accessToken && !refreshToken) {
+      return NextResponse.json(
+        { error: 'Missing tokens. Please re-authenticate.', requiresReauth: true },
+        { status: 401 }
+      );
     }
 
-    const formData = await req.formData();
-    const videoFile = formData.get("video") as File;
-    const title = (formData.get("title") as string) || "Untitled video";
-    const description = (formData.get("description") as string) || "Untitled description";
-    const hashtags = (formData.get("hashtags") as string)?.split(",") || [];
-    const thumbnail = formData.get("thumbnail") as File;
- console.log(thumbnail)
-    if (!videoFile || typeof videoFile.name !== "string") {
-      return NextResponse.json({ error: "Invalid or missing video file" }, { status: 400 });
-    }
-
-    const arrayBuffer = await videoFile.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const tempPath = `/tmp/${uuidv4()}-${videoFile.name}`;
-    await writeFile(tempPath, buffer);
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI
+    );
 
     oauth2Client.setCredentials({
-      access_token: user.googleAccessToken,
-      refresh_token: user.googleRefreshToken,
+      access_token: accessToken,
+      refresh_token: refreshToken,
     });
 
-    // Update token if refreshed
-   const { credentials } = await oauth2Client.refreshAccessToken();
+    // Refresh token if needed
+    if (!accessToken || (session.user.expiryDate && session.user.expiryDate < Date.now())) {
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      if (!credentials.access_token) {
+        return NextResponse.json(
+          { error: 'Token refresh failed. Please re-authenticate.', requiresReauth: true },
+          { status: 401 }
+        );
+      }
 
-  if (!credentials.access_token) {
-    return NextResponse.json({ error: "Token refresh failed" }, { status: 401 });
-  }
-
-  // Update the token in DB if it's new
-  await prisma.user.update({
-    where: { email: session.user.email },
-    data: { googleAccessToken: credentials.access_token },
-  });
-
-  // Re-apply the refreshed credentials
-  oauth2Client.setCredentials(credentials);
-    const youtube = google.youtube({ version: "v3", auth: oauth2Client });
-
-    // ✅ Get valid categoryId dynamically
-    let categoryId = "24"; // Default fallback
-    try {
-      const categoriesRes = await youtube.videoCategories.list({
-        part: ["snippet"],
-        regionCode: "IN", // or "IN" for India
+      await prisma.user.update({
+        where: { email: session.user.email },
+        data: {
+          googleAccessToken: credentials.access_token,
+          googleRefreshToken: credentials.refresh_token || refreshToken,
+          updatedAt: new Date(),
+        },
       });
 
-      const categories = categoriesRes.data.items;
-      if (categories?.length) {
-        const match = categories.find(
-          (c) => c.snippet?.title === "Entertainment" && c.snippet?.assignable
-        );
-        if (match?.id) categoryId = match.id;
-      }
-    } catch (err) {
-      console.warn("Failed to fetch categories, using default:", err);
+      oauth2Client.setCredentials(credentials);
     }
 
-    const uploadRes = await youtube.videos.insert({
-      part: ["snippet", "status"],
+    const formData = await request.formData();
+    const videoFile = formData.get('video') as File;
+    const title = formData.get('title') as string;
+    const description = formData.get('description') as string;
+    const videoId = formData.get('videoId') as string;
+    const privacyStatus = formData.get('privacyStatus') as string;
+
+    if (!videoFile || !title || !description || !videoId) {
+      return NextResponse.json({ error: 'Missing video, title, description, or videoId.' }, { status: 400 });
+    }
+
+    // Updated validation to include 'unlisted'
+    if (!['public', 'private', 'unlisted'].includes(privacyStatus)) {
+      return NextResponse.json(
+        { error: "Invalid privacy status. Must be 'public', 'private', or 'unlisted'." },
+        { status: 400 }
+      );
+    }
+
+    const numericVideoId = Number(videoId);
+    if (isNaN(numericVideoId)) {
+      return NextResponse.json({ error: 'Invalid videoId' }, { status: 400 });
+    }
+
+    const videoRecord = await prisma.video.findUnique({ where: { id: numericVideoId } });
+    if (!videoRecord) {
+      return NextResponse.json({ error: 'Video ID not found in database' }, { status: 404 });
+    }
+
+    const buffer = Buffer.from(await videoFile.arrayBuffer());
+    const stream = Readable.from(buffer);
+
+    const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+
+    const uploadResponse = await youtube.videos.insert({
+      part: ['snippet', 'status'],
       requestBody: {
         snippet: {
           title,
           description,
-          tags: hashtags,
-          categoryId,
         },
         status: {
-          privacyStatus: "public",
+          privacyStatus,
         },
       },
       media: {
-        body: fs.createReadStream(tempPath),
+        body: stream,
       },
     });
-console.log(uploadRes)
-    await unlink(tempPath);
-if (
-  thumbnail &&
-  typeof thumbnail.name === "string" &&
-  typeof uploadRes.data.id === "string"
-) {
-  const thumbArrayBuffer = await thumbnail.arrayBuffer();
-  const thumbBuffer = Buffer.from(thumbArrayBuffer);
-  const thumbTempPath = `/tmp/${uuidv4()}-${thumbnail.name}`;
 
-  await writeFile(thumbTempPath, thumbBuffer);
+    const youtubeVideoId = uploadResponse.data.id;
 
-  await youtube.thumbnails.set({
-    videoId: uploadRes.data.id,
-    media: {
-      mimeType: "image/jpeg",
-      body: fs.createReadStream(thumbTempPath),
-    },
-  });
+    await prisma.video.update({
+      where: { id: numericVideoId },
+      data: {
+        youtubeVideoId,
+        status: 'uploaded',
+      },
+    });
 
-  await unlink(thumbTempPath); 
-}
-
-    return NextResponse.json({ videoId: uploadRes.data.id, message: "Video uploaded successfully" });
+    return NextResponse.json({
+      success: true,
+      videoId: youtubeVideoId,
+      message: 'Video uploaded to YouTube successfully.',
+    });
   } catch (error: any) {
-    console.error("Upload Error:", error);
+    console.error('YouTube Upload Error:', JSON.stringify(error, null, 2));
+
+    if (error.code === 401) {
+      return NextResponse.json(
+        { error: 'Unauthorized. Re-authenticate.', requiresReauth: true },
+        { status: 401 }
+      );
+    }
+    if (error.code === 403) {
+      return NextResponse.json(
+        { error: 'YouTube API quota exceeded or insufficient permissions.' },
+        { status: 403 }
+      );
+    }
+
     return NextResponse.json(
-      { error: "Something went wrong", details: error.message },
+      { error: 'Upload failed', details: error.message || 'Unknown error' },
       { status: 500 }
     );
   }
