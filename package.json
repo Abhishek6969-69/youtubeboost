@@ -9,12 +9,13 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@prisma/client": "^6.11.1",
+    "prisma": "^6.11.1",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/generative-ai": "^0.24.1",
     "@langchain/core": "^0.0.8",
     "@langchain/openai": "^0.0.14",
     "@pinecone-database/pinecone": "^6.1.1",
-    "@prisma/client": "^5.16.1",
     "@radix-ui/react-select": "^2.2.5",
     "@radix-ui/react-slot": "^1.2.3",
     "@tailwindcss/postcss": "^4.0.0",
